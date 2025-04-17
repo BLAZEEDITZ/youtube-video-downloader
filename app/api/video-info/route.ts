@@ -1,6 +1,9 @@
 import { type NextRequest, NextResponse } from "next/server"
 import ytdl from "ytdl-core"
 
+export const runtime = "nodejs"
+export const maxDuration = 30 // This extends the function timeout to 30 seconds
+
 export async function GET(request: NextRequest) {
   try {
     // Get the URL from the query parameters
@@ -14,17 +17,31 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Invalid YouTube URL" }, { status: 400 })
     }
 
-    // Get video info
-    const info = await ytdl.getInfo(url)
+    // Get video info with additional options to bypass restrictions
+    const info = await ytdl.getInfo(url, {
+      requestOptions: {
+        headers: {
+          // Add user-agent to mimic a browser request
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+          // Add cookie if available (this would be better with actual cookies)
+          Cookie: "CONSENT=YES+cb; YSC=DwKYllHNwuw; VISITOR_INFO1_LIVE=y-VjbJEOTHw;",
+        },
+      },
+    })
 
     // Extract relevant information
     const videoDetails = {
       title: info.videoDetails.title,
+      description: info.videoDetails.shortDescription,
       thumbnail: info.videoDetails.thumbnails[info.videoDetails.thumbnails.length - 1].url,
+      duration: info.videoDetails.lengthSeconds,
+      author: info.videoDetails.author.name,
+      viewCount: info.videoDetails.viewCount,
       formats: info.formats
         .filter((format) => {
-          // Filter out formats without audio or video, and formats with unknown content length
-          return (format.hasAudio || format.hasVideo) && (format.contentLength || format.approxDurationMs)
+          // Filter out formats without audio or video
+          return format.hasAudio || format.hasVideo
         })
         .map((format) => ({
           itag: format.itag,
@@ -43,6 +60,17 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(videoDetails)
   } catch (error: any) {
     console.error("Error fetching video info:", error)
-    return NextResponse.json({ error: error.message || "Failed to fetch video information" }, { status: 500 })
+
+    // Provide more detailed error information
+    let errorMessage = error.message || "Failed to fetch video information"
+
+    // Check for specific ytdl-core errors
+    if (errorMessage.includes("Status code: 410")) {
+      errorMessage = "YouTube has blocked this request. This may be temporary - please try again later."
+    } else if (errorMessage.includes("No video id found")) {
+      errorMessage = "Invalid YouTube URL. Please check the URL and try again."
+    }
+
+    return NextResponse.json({ error: errorMessage }, { status: 500 })
   }
 }
